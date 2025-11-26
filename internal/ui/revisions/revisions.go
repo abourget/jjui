@@ -58,6 +58,7 @@ type Model struct {
 	hasMore          bool
 	op               common.Model
 	cursor           int
+	keepSelections   bool // Track if current refresh should preserve selections
 	context          *appContext.MainContext
 	keymap           config.KeyMappings[key.Binding]
 	output           string
@@ -258,6 +259,7 @@ func (m *Model) internalUpdate(msg tea.Msg) tea.Cmd {
 			return common.RefreshAndKeepSelections
 		}
 	case common.RefreshMsg:
+		m.keepSelections = msg.KeepSelections
 		if !msg.KeepSelections {
 			m.context.ClearCheckedItems(reflect.TypeFor[appContext.SelectedRevision]())
 		}
@@ -272,9 +274,16 @@ func (m *Model) internalUpdate(msg tea.Msg) tea.Cmd {
 	case updateRevisionsMsg:
 		m.isLoading = false
 		m.updateGraphRows(msg.rows, msg.selectedRevision)
-		return tea.Batch(m.highlightChanges, m.updateSelection(), func() tea.Msg {
+		var cmds []tea.Cmd
+		cmds = append(cmds, m.highlightChanges)
+		// Only update selection if we're not preserving selections
+		if !m.keepSelections {
+			cmds = append(cmds, m.updateSelection())
+		}
+		cmds = append(cmds, func() tea.Msg {
 			return common.UpdateRevisionsSuccessMsg{}
 		})
+		return tea.Batch(cmds...)
 	case startRowsStreamingMsg:
 		m.offScreenRows = nil
 		m.revisionToSelect = msg.selectedRevision
@@ -288,7 +297,7 @@ func (m *Model) internalUpdate(msg tea.Msg) tea.Cmd {
 				m.revisionToSelect = selected.CommitId
 			}
 		}
-		log.Println("Starting streaming revisions message received with tag:", msg.tag, "revision to select:", msg.selectedRevision)
+		log.Println("Starting streaming revisions with tag:", msg.tag)
 		return m.requestMoreRows(msg.tag)
 	case appendRowsBatchMsg:
 		if msg.tag != m.tag.Load() {
@@ -322,7 +331,11 @@ func (m *Model) internalUpdate(msg tea.Msg) tea.Cmd {
 			m.cursor = 0
 		}
 
-		cmds := []tea.Cmd{m.highlightChanges, m.updateSelection()}
+		cmds := []tea.Cmd{m.highlightChanges}
+		// Only update selection if we're not preserving selections
+		if !m.keepSelections {
+			cmds = append(cmds, m.updateSelection())
+		}
 		if !m.hasMore {
 			cmds = append(cmds, func() tea.Msg {
 				return common.UpdateRevisionsSuccessMsg{}
@@ -331,6 +344,9 @@ func (m *Model) internalUpdate(msg tea.Msg) tea.Cmd {
 		return tea.Batch(cmds...)
 	case common.StartSquashOperationMsg:
 		return m.startSquash(jj.NewSelectedRevisions(msg.Revision), msg.Files)
+	case common.UpdateRevisionsSuccessMsg:
+		// Reset the keepSelections flag after refresh is complete
+		m.keepSelections = false
 	}
 
 	if len(m.rows) == 0 {

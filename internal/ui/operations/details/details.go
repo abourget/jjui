@@ -56,6 +56,45 @@ func (s *Operation) Init() tea.Cmd {
 	return s.load(s.revision.GetChangeId())
 }
 
+func (s *Operation) preserveSelection(items []*item, currentHighlightedFile string) (context.SelectedItem, int) {
+	// First, try to preserve the cursor position (highlighted file)
+	if currentHighlightedFile != "" {
+		for i, it := range items {
+			if it.fileName == currentHighlightedFile {
+				return context.SelectedFile{
+					ChangeId: s.revision.GetChangeId(),
+					CommitId: s.revision.CommitId,
+					File:     it.fileName,
+				}, i
+			}
+		}
+	}
+
+	// If cursor wasn't preserved, try to preserve the context selection
+	if currentFile, ok := s.context.SelectedItem.(context.SelectedFile); ok {
+		for i, it := range items {
+			if it.fileName == currentFile.File {
+				return context.SelectedFile{
+					ChangeId: s.revision.GetChangeId(),
+					CommitId: s.revision.CommitId,
+					File:     it.fileName,
+				}, i
+			}
+		}
+	}
+
+	// Fallback to first file
+	if len(items) > 0 {
+		return context.SelectedFile{
+			ChangeId: s.revision.GetChangeId(),
+			CommitId: s.revision.CommitId,
+			File:     items[0].fileName,
+		}, 0
+	}
+
+	return nil, 0
+}
+
 func (s *Operation) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case confirmation.CloseMsg:
@@ -66,25 +105,36 @@ func (s *Operation) Update(msg tea.Msg) tea.Cmd {
 	case common.RefreshMsg:
 		return s.load(s.revision.GetChangeId())
 	case updateCommitStatusMsg:
+		// Preserve the current cursor position (highlighted file) before rebuilding
+		var currentHighlightedFile string
+		if current := s.current(); current != nil {
+			currentHighlightedFile = current.fileName
+		}
+
 		items := s.createListItems(msg.summary, msg.selectedFiles)
 		var selectionChangedCmd tea.Cmd
 		s.context.ClearCheckedItems(reflect.TypeFor[context.SelectedFile]())
+
 		if len(items) > 0 {
-			var first context.SelectedItem
+			preservedSelection, cursorIndex := s.preserveSelection(items, currentHighlightedFile)
+			s.cursor = cursorIndex
+
+			// Add checked items
 			for _, it := range items {
 				sel := context.SelectedFile{
 					ChangeId: s.revision.GetChangeId(),
 					CommitId: s.revision.CommitId,
 					File:     it.fileName,
 				}
-				if first == nil {
-					first = sel
-				}
 				if it.selected {
 					s.context.AddCheckedItem(sel)
 				}
 			}
-			selectionChangedCmd = s.context.SetSelectedItem(first)
+
+			// Only send selection changed if we have a preserved selection
+			if preservedSelection != nil {
+				selectionChangedCmd = s.context.SetSelectedItem(preservedSelection)
+			}
 		}
 		s.setItems(items)
 		return selectionChangedCmd

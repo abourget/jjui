@@ -111,7 +111,7 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		msg = k.msg
 	}
 	switch msg := msg.(type) {
-	case common.SelectionChangedMsg, common.RefreshMsg:
+	case common.SelectionChangedMsg:
 		tag := m.tag.Add(1)
 		return tea.Tick(DebounceTime, func(t time.Time) tea.Msg {
 			if tag != m.tag.Load() {
@@ -119,6 +119,16 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 			}
 			return refreshPreviewContentMsg{Tag: tag}
 		})
+	case common.RefreshMsg:
+		if _, ok := m.context.SelectedItem.(context.SelectedFile); ok {
+			tag := m.tag.Add(1)
+			return tea.Tick(DebounceTime, func(t time.Time) tea.Msg {
+				if tag != m.tag.Load() {
+					return nil
+				}
+				return refreshPreviewContentMsg{Tag: tag}
+			})
+		}
 	case refreshPreviewContentMsg:
 		if m.tag.Load() == msg.Tag {
 			tag := msg.Tag
